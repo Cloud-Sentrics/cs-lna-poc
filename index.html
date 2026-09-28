@@ -1,0 +1,97 @@
+<!doctype html><html><head><meta charset="utf-8"><title>CS WebTransport PoC</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>body{font:14px/1.5 system-ui;margin:16px;max-width:860px}button{margin:3px;padding:6px 10px}
+#log{white-space:pre-wrap;background:#111;color:#0f0;padding:10px;border-radius:6px;height:360px;overflow:auto;font:12px monospace}
+input{padding:5px}.w{width:430px}.h{width:520px}.ok{color:#0a0}.bad{color:#c00}</style></head>
+<body>
+<h3>Cloud Sentrics — WebTransport + serverCertificateHashes PoC (throwaway, synthetic only)</h3>
+<p>Relay WebTransport URL: <input id="url" class="w" value="https://10.0.0.169:4433/wt"></p>
+<p>Pinned cert SHA-256 (hex): <input id="hash" class="h" value="8c1b989c026a22cd20e9f698f167460066a1a71238dc789e80be6b78c29425a5"></p>
+<p><b>WAN-UP:</b> <button onclick="enroll()">1. Connect + Enroll</button> <button onclick="location.reload()">(reload → SW cache)</button></p>
+<p><b>WAN-DOWN:</b> <button onclick="reach()">2. Reach relay (WebTransport/LNA)</button> <button onclick="rt()">3. Authenticated round-trip</button></p>
+<p><b>Negative:</b> <button onclick="wrongHash()">wrong cert-hash</button> <button onclick="rt('wrongkey')">wrong-relay-key</button> <button onclick="rt('replay')">replay</button> <button onclick="rt('tamper')">tamper</button> <button onclick="rt('wrongsite')">wrong-site</button></p>
+<div id="log"></div>
+<script>
+const S=globalThis.crypto.subtle, L=(m,c)=>{const d=document.getElementById('log');d.innerHTML+=(c?`<span class="${c}">${m}</span>`:m)+"\n";d.scrollTop=d.scrollHeight;};
+const U=()=>document.getElementById('url').value.trim(), HH=()=>document.getElementById('hash').value.trim();
+const enc=new TextEncoder(), dec=new TextDecoder();
+const b64=b=>btoa(String.fromCharCode(...new Uint8Array(b))), ub=s=>Uint8Array.from(atob(s),c=>c.charCodeAt(0));
+const hex2u8=h=>Uint8Array.from(h.match(/../g).map(x=>parseInt(x,16)));
+const pubId=j=>j.x+'.'+j.y;
+const gS=()=>S.generateKey({name:'ECDSA',namedCurve:'P-256'},true,['sign','verify']);
+const gD=()=>S.generateKey({name:'ECDH',namedCurve:'P-256'},true,['deriveBits']);
+const ex=k=>S.exportKey('jwk',k);
+const iS=j=>S.importKey('jwk',j,{name:'ECDSA',namedCurve:'P-256'},true,['sign']);
+const iV=j=>S.importKey('jwk',j,{name:'ECDSA',namedCurve:'P-256'},true,['verify']);
+const iDp=j=>S.importKey('jwk',j,{name:'ECDH',namedCurve:'P-256'},true,['deriveBits']);
+const iDpub=j=>S.importKey('jwk',j,{name:'ECDH',namedCurve:'P-256'},true,[]);
+const sign=async(pj,s)=>b64(await S.sign({name:'ECDSA',hash:'SHA-256'},await iS(pj),enc.encode(s)));
+const verify=async(pj,s,sig)=>S.verify({name:'ECDSA',hash:'SHA-256'},await iV(pj),ub(sig),enc.encode(s));
+const sk=async(privj,pubj)=>{const bits=await S.deriveBits({name:'ECDH',public:await iDpub(pubj)},await iDp(privj),256);const h=await S.digest('SHA-256',bits);return S.importKey('raw',h,{name:'AES-GCM'},false,['encrypt','decrypt']);};
+const aenc=async(k,s)=>{const iv=crypto.getRandomValues(new Uint8Array(12));const ct=await S.encrypt({name:'AES-GCM',iv},k,enc.encode(s));return{iv:b64(iv),ct:b64(ct)};};
+const adec=async(k,iv,ct)=>dec.decode(await S.decrypt({name:'AES-GCM',iv:ub(iv)},k,ub(ct)));
+const rnd=()=>b64(crypto.getRandomValues(new Uint8Array(16)));
+async function connectWT(hashHex){
+  const value=hex2u8(hashHex);
+  const wt=new WebTransport(U(),{serverCertificateHashes:[{algorithm:'sha-256',value}]});
+  await wt.ready; return wt;
+}
+async function rpc(wt,obj){
+  const s=await wt.createBidirectionalStream();
+  const w=s.writable.getWriter(); await w.write(enc.encode(JSON.stringify(obj))); await w.close();
+  const r=s.readable.getReader(); let parts=[],n=0; for(;;){const{value,done}=await r.read(); if(done)break; parts.push(value); n+=value.length;}
+  const buf=new Uint8Array(n); let o=0; for(const p of parts){buf.set(p,o);o+=p.length;} return JSON.parse(dec.decode(buf));
+}
+function cls(e){L("  error: "+(e&&e.message||e),'bad');
+  L("  → WebTransport fail-closed if: cert-hash mismatch, LNA denied, or relay unreachable. Check console/prompt.",'');}
+
+async function enroll(){try{
+  L("[enroll] opening WebTransport (serverCertificateHashes pinned)…");
+  const wt=await connectWT(HH()); L("[enroll] WT session READY (cert-hash matched, LNA allowed)",'ok');
+  const rp=await rpc(wt,{op:'relay-pub'});
+  const dev=await gS(), deviceId='dev-'+rnd().slice(0,8); const priv=await ex(dev.privateKey), pub=await ex(dev.publicKey);
+  const er=await rpc(wt,{op:'enroll',deviceId,devicePub:pub});
+  localStorage.setItem('wt_pin',JSON.stringify({siteId:rp.siteId,relayId:rp.relayId,relayPub:rp.pub}));
+  localStorage.setItem('wt_dev',JSON.stringify({deviceId,priv,pub}));
+  L("[enroll] pinned "+rp.siteId+"/"+rp.relayId+", enrolled "+deviceId+" → "+(er.ok?'OK':'FAIL'),er.ok?'ok':'bad');
+  if('serviceWorker' in navigator){await navigator.serviceWorker.register('sw.js');L("[enroll] service worker registered (cold-load offline)",'ok');}
+  try{wt.close();}catch(e){}
+}catch(e){L("[enroll] FAILED",'bad');cls(e);}}
+
+async function reach(){try{
+  L("[reach] WebTransport connect to relay private IP…");
+  const wt=await connectWT(HH()); const rp=await rpc(wt,{op:'relay-pub'});
+  L("[reach] REACHED relay over WebTransport: "+rp.siteId+"/"+rp.relayId+"  ✔ (secure QUIC, no mixed content)",'ok');
+  try{wt.close();}catch(e){}
+}catch(e){L("[reach] FAILED to reach relay",'bad');cls(e);}}
+
+async function rt(neg){try{
+  const pin=JSON.parse(localStorage.getItem('wt_pin')||'null'), dev=JSON.parse(localStorage.getItem('wt_dev')||'null');
+  if(!pin||!dev){L("[rt] not enrolled — run 1 first (WAN-up)",'bad');return;}
+  let siteId=pin.siteId,relayId=pin.relayId,relayPub=pin.relayPub;
+  if(neg==='wrongsite')siteId='evil-site'; if(neg==='wrongkey'){const k=await gS();relayPub=await ex(k.publicKey);}
+  const wt=await connectWT(HH());
+  const eph=await gD(),cEphPub=await ex(eph.publicKey),cEphPriv=await ex(eph.privateKey),cn=rnd(),ts=Date.now();
+  const sig=await sign(dev.priv,[cn,ts,siteId,relayId,dev.deviceId,pubId(cEphPub)].join('|'));
+  const hello={op:'connect',clientNonce:cn,ts,siteId,relayId,deviceId:dev.deviceId,clientEphPub:cEphPub,sig};
+  if(neg==='replay'){const a=await rpc(wt,hello);const b=await rpc(wt,hello);L("[rt] replay → first="+(a.ok?'ok':a.code)+" second="+(b.code||'accepted'),(!b.ok&&b.code==='replay')?'ok':'bad');if(!b.ok&&b.code==='replay')L("  replay REJECTED ✔",'ok');try{wt.close();}catch(e){}return;}
+  const r=await rpc(wt,hello);
+  if(!r.ok){L("[rt] connect rejected: "+r.code+(neg==='wrongsite'?' ✔ (fail-closed)':''),neg==='wrongsite'?'ok':'bad');try{wt.close();}catch(e){}return;}
+  const okRelay=await verify(relayPub,[cn,r.relayNonce,r.siteId,r.relayId,pubId(r.relayEphPub),pubId(cEphPub)].join('|'),r.sig);
+  if(!okRelay){L("[rt] relay identity verify FAILED → fail-closed, NO payload"+(neg==='wrongkey'?' ✔ (rogue rejected)':''),neg==='wrongkey'?'ok':'bad');try{wt.close();}catch(e){}return;}
+  const key=await sk(cEphPriv,r.relayEphPub);
+  const frame=await aenc(key,JSON.stringify({type:'synthetic-sync',patient:'SYNTHETIC-NO-PHI',rnd:Math.random()}));
+  if(neg==='tamper'){const raw=ub(frame.ct);raw[0]^=0xff;frame.ct=b64(raw);}
+  const d=await rpc(wt,{op:'data',sessionId:r.sessionId,...frame});
+  if(!d.ok){L("[rt] data rejected: "+d.code+(neg==='tamper'?' ✔ (tamper caught by AEAD)':''),neg==='tamper'?'ok':'bad');try{wt.close();}catch(e){}return;}
+  L("[rt] AUTHENTICATED ENCRYPTED ROUND-TRIP over WebTransport ✔  echo="+JSON.parse(await adec(key,d.iv,d.ct)).echo.type,'ok');
+  try{wt.close();}catch(e){}
+}catch(e){L("[rt] error",'bad');cls(e);}}
+
+async function wrongHash(){try{
+  L("[wrong-hash] connecting with a BOGUS cert hash (expect fail-closed at ready)…");
+  await connectWT('00'.repeat(32));
+  L("[wrong-hash] CONNECTED — UNEXPECTED (FAIL)",'bad');
+}catch(e){L("[wrong-hash] WebTransport rejected at ready ✔ (fail-closed, no session): "+String(e&&e.message||e).slice(0,70),'ok');}}
+L("Ready. Chrome/Edge, stock, no flags. WebTransport over QUIC (secure — no mixed content). Enroll WAN-up, then test WAN-down.");
+</script></body></html>
