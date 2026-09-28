@@ -1,6 +1,19 @@
-/* Throwaway SW: cache the WebTransport shell so it cold-loads with WAN down. Does not intercept the
- * WebTransport session (that's not a fetch); only caches the shell's own origin assets. */
-const CACHE='cs-wt-poc-v1';
-self.addEventListener('install',e=>{self.skipWaiting();e.waitUntil(caches.open(CACHE).then(c=>c.addAll(['./','./index.html','./sw.js'])));});
-self.addEventListener('activate',e=>{e.waitUntil(self.clients.claim());});
-self.addEventListener('fetch',e=>{const u=new URL(e.request.url); if(u.origin===self.location.origin){e.respondWith(caches.match(e.request).then(r=>r||fetch(e.request)));}});
+/* Throwaway SW v2: reliably serve the shell offline. Navigations = network-first, fall back to cached
+ * index.html when WAN is down. Other same-origin = cache-first. Does not touch the WebTransport session. */
+const CACHE='cs-wt-poc-v2';
+const ASSETS=['./','./index.html','./sw.js'];
+self.addEventListener('install',e=>{self.skipWaiting();e.waitUntil(caches.open(CACHE).then(c=>c.addAll(ASSETS)));});
+self.addEventListener('activate',e=>{e.waitUntil((async()=>{await self.clients.claim();})());});
+self.addEventListener('fetch',e=>{
+  const req=e.request;
+  if(req.mode==='navigate'){
+    e.respondWith((async()=>{
+      try{return await fetch(req);}
+      catch(err){const c=await caches.open(CACHE);return (await c.match('./index.html'))||(await c.match('./'))||Response.error();}
+    })());
+    return;
+  }
+  if(new URL(req.url).origin===self.location.origin){
+    e.respondWith(caches.match(req).then(r=>r||fetch(req).catch(()=>caches.match('./index.html'))));
+  }
+});

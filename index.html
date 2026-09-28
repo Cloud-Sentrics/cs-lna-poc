@@ -93,5 +93,6 @@ async function wrongHash(){try{
   await connectWT('00'.repeat(32));
   L("[wrong-hash] CONNECTED — UNEXPECTED (FAIL)",'bad');
 }catch(e){L("[wrong-hash] WebTransport rejected at ready ✔ (fail-closed, no session): "+String(e&&e.message||e).slice(0,70),'ok');}}
+if('serviceWorker' in navigator){navigator.serviceWorker.register('sw.js').then(async()=>{await navigator.serviceWorker.ready;const c=await caches.open('cs-wt-poc-v2');const keys=await c.keys();L("[sw] active controlling="+(!!navigator.serviceWorker.controller)+" cached "+keys.length+" assets: "+keys.map(k=>new URL(k.url).pathname).join(', '),keys.length?'ok':'bad');}).catch(e=>L("[sw] register failed: "+e.message,'bad'));}
 L("Ready. Chrome/Edge, stock, no flags. WebTransport over QUIC (secure — no mixed content). Enroll WAN-up, then test WAN-down.");
 </script></body></html>
