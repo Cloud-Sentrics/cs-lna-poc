@@ -31,10 +31,21 @@ const sk=async(privj,pubj)=>{const bits=await S.deriveBits({name:'ECDH',public:a
 const aenc=async(k,s)=>{const iv=crypto.getRandomValues(new Uint8Array(12));const ct=await S.encrypt({name:'AES-GCM',iv},k,enc.encode(s));return{iv:b64(iv),ct:b64(ct)};};
 const adec=async(k,iv,ct)=>dec.decode(await S.decrypt({name:'AES-GCM',iv:ub(iv)},k,ub(ct)));
 const rnd=()=>b64(crypto.getRandomValues(new Uint8Array(16)));
-async function connectWT(hashHex){
+async function connectWT(hashHex,retries=3){
   const value=hex2u8(hashHex);
-  const wt=new WebTransport(U(),{serverCertificateHashes:[{algorithm:'sha-256',value}]});
-  await wt.ready; return wt;
+  let lastErr;
+  for(let i=0;i<=retries;i++){
+    try{
+      const wt=new WebTransport(U(),{serverCertificateHashes:[{algorithm:'sha-256',value}]});
+      await wt.ready;
+      if(i>0)L("  connected on attempt "+(i+1)+" ✔ (retry recovered transient QUIC handshake)",'ok');
+      return wt;
+    }catch(e){
+      lastErr=e;
+      if(i<retries){const d=300*Math.pow(2,i);L("  connect attempt "+(i+1)+" failed ("+String(e&&e.message||e).slice(0,32)+") — retry in "+d+"ms…",'');await new Promise(r=>setTimeout(r,d));}
+    }
+  }
+  throw lastErr;
 }
 async function rpc(wt,obj){
   const s=await wt.createBidirectionalStream();
@@ -91,10 +102,10 @@ async function rt(neg){try{
 
 async function wrongHash(){try{
   L("[wrong-hash] connecting with a BOGUS cert hash (expect fail-closed at ready)…");
-  await connectWT('00'.repeat(32));
+  await connectWT('00'.repeat(32), 0);
   L("[wrong-hash] CONNECTED — UNEXPECTED (FAIL)",'bad');
 }catch(e){L("[wrong-hash] WebTransport rejected at ready ✔ (fail-closed, no session): "+String(e&&e.message||e).slice(0,70),'ok');}}
 (function(){const su=localStorage.getItem('wt_url');if(su)document.getElementById('url').value=su;const sh=localStorage.getItem('wt_hash');if(sh)document.getElementById('hash').value=sh;})();
-if('serviceWorker' in navigator){navigator.serviceWorker.register('sw.js').then(async()=>{await navigator.serviceWorker.ready;const c=await caches.open('cs-wt-poc-v3');const keys=await c.keys();L("[sw] active controlling="+(!!navigator.serviceWorker.controller)+" cached "+keys.length+" assets: "+keys.map(k=>new URL(k.url).pathname).join(', '),keys.length?'ok':'bad');}).catch(e=>L("[sw] register failed: "+e.message,'bad'));}
+if('serviceWorker' in navigator){navigator.serviceWorker.register('sw.js').then(async()=>{await navigator.serviceWorker.ready;const c=await caches.open('cs-wt-poc-v4');const keys=await c.keys();L("[sw] active controlling="+(!!navigator.serviceWorker.controller)+" cached "+keys.length+" assets: "+keys.map(k=>new URL(k.url).pathname).join(', '),keys.length?'ok':'bad');}).catch(e=>L("[sw] register failed: "+e.message,'bad'));}
 L("Ready. Chrome/Edge, stock, no flags. WebTransport over QUIC (secure — no mixed content). Enroll WAN-up, then test WAN-down.");
 </script></body></html>
