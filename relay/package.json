@@ -1,0 +1,13 @@
+{
+  "name": "cs-wt-relay",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Throwaway WebTransport/HTTP-3 relay for the cross-device serverCertificateHashes spike (PoC only, synthetic data).",
+  "dependencies": {
+    "@fails-components/webtransport": "1.6.8",
+    "@fails-components/webtransport-transport-http3-quiche": "1.6.8",
+    "@peculiar/x509": "2.1.0",
+    "reflect-metadata": "0.2.2"
+  }
+}

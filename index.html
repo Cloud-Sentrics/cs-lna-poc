@@ -5,7 +5,7 @@
 input{padding:5px}.w{width:430px}.h{width:520px}.ok{color:#0a0}.bad{color:#c00}</style></head>
 <body>
 <h3>Cloud Sentrics — WebTransport + serverCertificateHashes PoC (throwaway, synthetic only)</h3>
-<p>Relay WebTransport URL: <input id="url" class="w" value="https://10.0.0.169:4433/wt"></p>
+<p>Relay WebTransport URL: <input id="url" class="w" value="https://10.0.0.96:4433/wt"></p>
 <p>Pinned cert SHA-256 (hex): <input id="hash" class="h" value="8c1b989c026a22cd20e9f698f167460066a1a71238dc789e80be6b78c29425a5"></p>
 <p><b>WAN-UP:</b> <button onclick="enroll()">1. Connect + Enroll</button> <button onclick="location.reload()">(reload → SW cache)</button></p>
 <p><b>WAN-DOWN:</b> <button onclick="reach()">2. Reach relay (WebTransport/LNA)</button> <button onclick="rt()">3. Authenticated round-trip</button></p>
@@ -53,6 +53,7 @@ async function enroll(){try{
   const er=await rpc(wt,{op:'enroll',deviceId,devicePub:pub});
   localStorage.setItem('wt_pin',JSON.stringify({siteId:rp.siteId,relayId:rp.relayId,relayPub:rp.pub}));
   localStorage.setItem('wt_dev',JSON.stringify({deviceId,priv,pub}));
+  localStorage.setItem('wt_url',U()); localStorage.setItem('wt_hash',HH());
   L("[enroll] pinned "+rp.siteId+"/"+rp.relayId+", enrolled "+deviceId+" → "+(er.ok?'OK':'FAIL'),er.ok?'ok':'bad');
   if('serviceWorker' in navigator){await navigator.serviceWorker.register('sw.js');L("[enroll] service worker registered (cold-load offline)",'ok');}
   try{wt.close();}catch(e){}
@@ -93,6 +94,7 @@ async function wrongHash(){try{
   await connectWT('00'.repeat(32));
   L("[wrong-hash] CONNECTED — UNEXPECTED (FAIL)",'bad');
 }catch(e){L("[wrong-hash] WebTransport rejected at ready ✔ (fail-closed, no session): "+String(e&&e.message||e).slice(0,70),'ok');}}
-if('serviceWorker' in navigator){navigator.serviceWorker.register('sw.js').then(async()=>{await navigator.serviceWorker.ready;const c=await caches.open('cs-wt-poc-v2');const keys=await c.keys();L("[sw] active controlling="+(!!navigator.serviceWorker.controller)+" cached "+keys.length+" assets: "+keys.map(k=>new URL(k.url).pathname).join(', '),keys.length?'ok':'bad');}).catch(e=>L("[sw] register failed: "+e.message,'bad'));}
+(function(){const su=localStorage.getItem('wt_url');if(su)document.getElementById('url').value=su;const sh=localStorage.getItem('wt_hash');if(sh)document.getElementById('hash').value=sh;})();
+if('serviceWorker' in navigator){navigator.serviceWorker.register('sw.js').then(async()=>{await navigator.serviceWorker.ready;const c=await caches.open('cs-wt-poc-v3');const keys=await c.keys();L("[sw] active controlling="+(!!navigator.serviceWorker.controller)+" cached "+keys.length+" assets: "+keys.map(k=>new URL(k.url).pathname).join(', '),keys.length?'ok':'bad');}).catch(e=>L("[sw] register failed: "+e.message,'bad'));}
 L("Ready. Chrome/Edge, stock, no flags. WebTransport over QUIC (secure — no mixed content). Enroll WAN-up, then test WAN-down.");
 </script></body></html>
